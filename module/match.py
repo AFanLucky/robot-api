@@ -75,46 +75,50 @@ def crop_image_by_y(image_path, y_min, y_max, output_path=None):
 
     return cropped_img
 
-def process_cv(slide,bg):
-    # 转换为OpenCV可用的格式
-    slide_cv = np.array(slide)  # 从PIL Image转为numpy数组
+def sobel_edge(image):
+    image_x = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=3)
+    abs_x = cv2.convertScaleAbs(image_x)
+    image_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
+    abs_y = cv2.convertScaleAbs(image_y)
+    dst = cv2.addWeighted(abs_x, 0.5, abs_y, 0.5, 0)
+    return np.asarray(dst, dtype=np.uint8)
 
-    # 将PIL Image转换为numpy数组
-    cropped_bg_cv = np.array(bg)
-
-    # 调试信息
-    print(f"slide_cv shape: {slide_cv.shape}, dtype: {slide_cv.dtype}")
-    print(f"cropped_bg_cv shape: {cropped_bg_cv.shape}, dtype: {cropped_bg_cv.dtype}")
-
-    # 图像预处理 - 转为灰度
+def process_cv(slide_img, bg_img):
+    # 确保输入是numpy数组
+    if not isinstance(slide_img, np.ndarray):
+        slide_cv = np.array(slide_img)
+    else:
+        slide_cv = slide_img
+        
+    if not isinstance(bg_img, np.ndarray):
+        bg_cv = np.array(bg_img)
+    else:
+        bg_cv = bg_img
+    
+    # 转换为灰度
     if len(slide_cv.shape) == 3:
         slide_gray = cv2.cvtColor(slide_cv, cv2.COLOR_BGR2GRAY if slide_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
     else:
         slide_gray = slide_cv
-
-    if len(cropped_bg_cv.shape) == 3:
-        bg_gray = cv2.cvtColor(cropped_bg_cv,
-                               cv2.COLOR_BGR2GRAY if cropped_bg_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
+        
+    if len(bg_cv.shape) == 3:
+        bg_gray = cv2.cvtColor(bg_cv, cv2.COLOR_BGR2GRAY if bg_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
     else:
-        bg_gray = cropped_bg_cv
+        bg_gray = bg_cv
 
-    # 应用高斯滤波去噪
-    slide_blur = cv2.GaussianBlur(slide_gray, (5, 5), 0)
-    bg_blur = cv2.GaussianBlur(bg_gray, (5, 5), 0)
+    # 调试信息
+    print(f"slide_gray shape: {slide_gray.shape}, dtype: {slide_gray.dtype}")
+    print(f"bg_gray shape: {bg_gray.shape}, dtype: {bg_gray.dtype}")
 
-    # 应用边缘检测
-    slide_edges = cv2.Canny(slide_blur, 50, 150)
-    bg_edges = cv2.Canny(bg_blur, 50, 150)
+    # # 应用Sobel边缘检测
+    # slide_edges = sobel_edge(slide_gray)
+    # bg_edges = sobel_edge(bg_gray)
+    
+    # 保存边缘图用于调试
+    cv2.imwrite(os.path.join('saved_images', 'slide_edges_dilated.jpg'), slide_gray)
+    cv2.imwrite(os.path.join('saved_images', 'bg_edges_dilated.jpg'), bg_gray)
 
-    # 对边缘图像进行轻微膨胀，使边缘更加明显
-    kernel = np.ones((3, 3), np.uint8)
-    slide_edges = cv2.dilate(slide_edges, kernel, iterations=1)
-    bg_edges = cv2.dilate(bg_edges, kernel, iterations=1)
-
-    cv2.imwrite(os.path.join('saved_images', 'slide_edges_dilated.jpg'), slide_edges)
-    cv2.imwrite(os.path.join('saved_images', 'bg_edges_dilated.jpg'), bg_edges)
-
-    return slide_edges, bg_edges
+    return slide_gray, bg_gray
 
 def handle_calculate(bg_img, slide_img):
     print('执行了')
@@ -132,12 +136,12 @@ def handle_calculate(bg_img, slide_img):
 
         # 根据slide坐标裁剪bg
         cropped_bg_img = crop_image_by_y(bg_path, handle_slide_res['slide_y_min'], handle_slide_res['slide_y_max'])
-
-        # 使用cv进行图像处理
-        slide_by_cv,bg_by_cv= process_cv(handle_slide_res['slide_img'], cropped_bg_img)
-
+        
+        # 使用cv进行图像处理 - 传入图像对象而不是文件路径
+        slide_by_cv, bg_by_cv = process_cv(handle_slide_res['slide_img'], cropped_bg_img)
+        
         # 执行模板匹配 - 使用不同的匹配方法并取最佳结果
-        match_methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED]
+        match_methods = [cv2.TM_CCOEFF, cv2.TM_CCORR_NORMED]
         best_x = 0
         best_confidence = -float('inf')
         
@@ -146,7 +150,7 @@ def handle_calculate(bg_img, slide_img):
             res = cv2.matchTemplate(bg_by_cv, slide_by_cv, method)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             
-            print(f'匹配方法 {method} - 位置: {max_loc}, 相似度: {max_val}')
+            # print(f'匹配方法 {method} - 位置: {max_loc}, 相似度: {max_val}')
             
             if max_val > best_confidence:
                 best_confidence = max_val
