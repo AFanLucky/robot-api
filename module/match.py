@@ -137,7 +137,7 @@ def handle_calculate(bg_img, slide_img):
         slide_by_cv,bg_by_cv= process_cv(handle_slide_res['slide_img'], cropped_bg_img)
 
         # 执行模板匹配 - 使用不同的匹配方法并取最佳结果
-        match_methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED]
+        match_methods = [cv2.TM_CCOEFF, cv2.TM_CCORR_NORMED]
         best_x = 0
         best_confidence = -float('inf')
         
