@@ -75,6 +75,47 @@ def crop_image_by_y(image_path, y_min, y_max, output_path=None):
 
     return cropped_img
 
+def process_cv(slide,bg):
+    # 转换为OpenCV可用的格式
+    slide_cv = np.array(slide)  # 从PIL Image转为numpy数组
+
+    # 将PIL Image转换为numpy数组
+    cropped_bg_cv = np.array(bg)
+
+    # 调试信息
+    print(f"slide_cv shape: {slide_cv.shape}, dtype: {slide_cv.dtype}")
+    print(f"cropped_bg_cv shape: {cropped_bg_cv.shape}, dtype: {cropped_bg_cv.dtype}")
+
+    # 图像预处理 - 转为灰度
+    if len(slide_cv.shape) == 3:
+        slide_gray = cv2.cvtColor(slide_cv, cv2.COLOR_BGR2GRAY if slide_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
+    else:
+        slide_gray = slide_cv
+
+    if len(cropped_bg_cv.shape) == 3:
+        bg_gray = cv2.cvtColor(cropped_bg_cv,
+                               cv2.COLOR_BGR2GRAY if cropped_bg_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
+    else:
+        bg_gray = cropped_bg_cv
+
+    # 应用高斯滤波去噪
+    slide_blur = cv2.GaussianBlur(slide_gray, (5, 5), 0)
+    bg_blur = cv2.GaussianBlur(bg_gray, (5, 5), 0)
+
+    # 应用边缘检测
+    slide_edges = cv2.Canny(slide_blur, 50, 150)
+    bg_edges = cv2.Canny(bg_blur, 50, 150)
+
+    # 对边缘图像进行轻微膨胀，使边缘更加明显
+    kernel = np.ones((3, 3), np.uint8)
+    slide_edges = cv2.dilate(slide_edges, kernel, iterations=1)
+    bg_edges = cv2.dilate(bg_edges, kernel, iterations=1)
+
+    cv2.imwrite(os.path.join('saved_images', 'slide_edges_dilated.jpg'), slide_edges)
+    cv2.imwrite(os.path.join('saved_images', 'bg_edges_dilated.jpg'), bg_edges)
+
+    return slide_edges, bg_edges
+
 def handle_calculate(bg_img, slide_img):
     print('执行了')
     try:
@@ -91,43 +132,9 @@ def handle_calculate(bg_img, slide_img):
 
         # 根据slide坐标裁剪bg
         cropped_bg_img = crop_image_by_y(bg_path, handle_slide_res['slide_y_min'], handle_slide_res['slide_y_max'])
-        
-        # 转换为OpenCV可用的格式
-        slide_cv = np.array(handle_slide_res['slide_img'])  # 从PIL Image转为numpy数组
-        
-        # 将PIL Image转换为numpy数组
-        cropped_bg_cv = np.array(cropped_bg_img)
-        
-        # 调试信息
-        print(f"slide_cv shape: {slide_cv.shape}, dtype: {slide_cv.dtype}")
-        print(f"cropped_bg_cv shape: {cropped_bg_cv.shape}, dtype: {cropped_bg_cv.dtype}")
-        
-        # 图像预处理 - 转为灰度
-        if len(slide_cv.shape) == 3:
-            slide_gray = cv2.cvtColor(slide_cv, cv2.COLOR_BGR2GRAY if slide_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
-        else:
-            slide_gray = slide_cv
-            
-        if len(cropped_bg_cv.shape) == 3:
-            bg_gray = cv2.cvtColor(cropped_bg_cv, cv2.COLOR_BGR2GRAY if cropped_bg_cv.shape[2] == 3 else cv2.COLOR_BGRA2GRAY)
-        else:
-            bg_gray = cropped_bg_cv
-        
-        # 应用高斯滤波去噪
-        slide_blur = cv2.GaussianBlur(slide_gray, (5, 5), 0)
-        bg_blur = cv2.GaussianBlur(bg_gray, (5, 5), 0)
-        
-        # 应用边缘检测
-        slide_edges = cv2.Canny(slide_blur, 50, 150)
-        bg_edges = cv2.Canny(bg_blur, 50, 150)
 
-        # 对边缘图像进行轻微膨胀，使边缘更加明显
-        kernel = np.ones((3, 3), np.uint8)
-        slide_edges = cv2.dilate(slide_edges, kernel, iterations=1)
-        bg_edges = cv2.dilate(bg_edges, kernel, iterations=1)
-        
-        cv2.imwrite(os.path.join('saved_images', 'slide_edges_dilated.jpg'), slide_edges)
-        cv2.imwrite(os.path.join('saved_images', 'bg_edges_dilated.jpg'), bg_edges)
+        # 使用cv进行图像处理
+        slide_by_cv,bg_by_cv= process_cv(handle_slide_res['slide_img'], cropped_bg_img)
 
         # 执行模板匹配 - 使用不同的匹配方法并取最佳结果
         match_methods = [cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED]
@@ -136,7 +143,7 @@ def handle_calculate(bg_img, slide_img):
         
         for method in match_methods:
             # 对边缘图像进行模板匹配
-            res = cv2.matchTemplate(bg_edges, slide_edges, method)
+            res = cv2.matchTemplate(bg_by_cv, slide_by_cv, method)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
             
             print(f'匹配方法 {method} - 位置: {max_loc}, 相似度: {max_val}')
@@ -150,12 +157,11 @@ def handle_calculate(bg_img, slide_img):
         print(f'最佳匹配结果 - 方法: {best_method}, x坐标: {best_x}, 相似度: {best_confidence}')
 
         # 在背景边缘图像上标记匹配位置
-        result_edges = cv2.cvtColor(bg_edges, cv2.COLOR_GRAY2BGR)
+        result_edges = cv2.cvtColor(bg_by_cv, cv2.COLOR_GRAY2BGR)
         cv2.rectangle(result_edges, best_loc,
-                     (best_loc[0] + slide_edges.shape[1], best_loc[1] + slide_edges.shape[0]),
+                     (best_loc[0] + slide_by_cv.shape[1], best_loc[1] + slide_by_cv.shape[0]),
                      (0, 0, 255), 2)
         cv2.imwrite(os.path.join('saved_images', 'match_result_edges.jpg'), result_edges)
-
 
         return best_x
         
